@@ -1,0 +1,32 @@
+# Light Grid: near-black, glowing cyan lines, orange for warnings.
+mode = "dark"
+
+accent = "#00e5ff"
+selection = "#0b3a46"
+muted = "#1f4e5a"
+
+background = "#05090d"
+dark_background = "#03060a"
+darker_background = "#010305"
+lighter_background = "#0b1620"
+
+foreground = "#bdefff"
+dark_foreground = "#4f7f8c"
+light_foreground = "#d6f7ff"
+bright_foreground = "#ecfcff"
+
+red = "#ff4d3d"
+yellow = "#ffd166"
+orange = "#ff8a1f"
+green = "#3dffb0"
+cyan = "#00e5ff"
+blue = "#3aa0ff"
+magenta = "#c77dff"
+brown = "#7a4a22"
+
+bright_red = "#ff7a6e"
+bright_yellow = "#ffe08a"
+bright_green = "#7dffcc"
+bright_cyan = "#7df3ff"
+bright_blue = "#7cc0ff"
+bright_magenta = "#dba8ff"
