@@ -2,9 +2,21 @@
 
 An animated theme for [Omarchy](https://omarchy.org). Light-cycles racing over a glossy neon grid, laying walls of light under a stormy sky.
 
+> **Animated with [omarchy-live-wallpaper](https://github.com/Gleasonmt/omarchy-live-wallpaper).**
+> Install that plugin too (below) to make the wallpaper move and to get the
+> **Light Grid Lite** version. Without it the theme still works, with a still wallpaper.
+
 ![Light Grid](preview.jpg)
 
 ## Install
+
+Theme and plugin together:
+
+```bash
+omarchy theme install https://github.com/Gleasonmt/omarchy-light-grid-theme && omarchy plugin add https://github.com/Gleasonmt/omarchy-live-wallpaper --enable --yes
+```
+
+or one at a time:
 
 ```bash
 omarchy theme install https://github.com/Gleasonmt/omarchy-light-grid-theme
