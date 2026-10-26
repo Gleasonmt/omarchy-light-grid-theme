@@ -52,7 +52,9 @@ float cycleS(int c) { return (camZ() + AHEAD[c]) * LOOP_LEN[c] / LOOP_Z; }
 
 // ---- light walls ----
 // The trail behind cycle c as up to 8 straight pieces, newest first.
-struct Trail { vec2 a[8]; vec2 b[8]; float age[8]; int n; };
+// box = the pieces' bounds on the floor (x0, z0, x1, z1), so rays and floor
+// points far from the whole trail can skip it.
+struct Trail { vec2 a[8]; vec2 b[8]; float age[8]; int n; vec4 box; };
 
 Trail trailOf(int c) {
   Trail t; t.n = 0;
@@ -60,10 +62,12 @@ Trail trailOf(int c) {
   pathAt(c, cycleS(c) - .95, pos, dir, loopN, leg, into);  // walls start at the back wheel
   float left = TRAIL, age = 0.;
   vec2 end = pos;
+  t.box = pos.xyxy;
   for (int k = 0; k < 8; k++) {
     float take = min(into, left);
     vec2 start = end - dir * take;
     t.a[k] = start; t.b[k] = end; t.age[k] = age; t.n = k + 1;
+    t.box = vec4(min(t.box.xy, start), max(t.box.zw, start));
     left -= take; age += take;
     if (left <= 0.) break;
     // step back to the end of the previous leg
@@ -87,8 +91,20 @@ float packet(float age) {
   return exp(-x * x * mix(160., 70., detail));
 }
 
+// Does the ray, between 0 and maxT, pass through the trail's box grown by m
+// (and spanning heights y0..y1)?
+bool nearTrail(vec3 ro, vec3 rd, float maxT, Trail tr, float m, float y0, float y1) {
+  vec3 lo = vec3(tr.box.x - m, y0, tr.box.y - m), hi = vec3(tr.box.z + m, y1, tr.box.w + m);
+  vec3 inv = 1. / mix(rd, vec3(1e-6), lessThan(abs(rd), vec3(1e-6)));
+  vec3 t0 = (lo - ro) * inv, t1 = (hi - ro) * inv;
+  vec3 tn = min(t0, t1), tf = max(t0, t1);
+  float a = max(max(tn.x, tn.y), max(tn.z, 0.)), b = min(min(tf.x, tf.y), min(tf.z, maxT));
+  return a <= b;
+}
+
 // Walls hit by a ray (nearer than maxT): emission added, transmittance kept.
 void walls(vec3 ro, vec3 rd, float maxT, Trail tr, vec3 color, inout vec3 emit, inout float trans, inout float nearest) {
+  if (!nearTrail(ro, rd, maxT, tr, .05, -.05, WALL_H + .05)) return;   // misses every piece
   for (int k = 0; k < 8; k++) {
     if (k >= tr.n) break;
     vec2 a = tr.a[k], b = tr.b[k], e = b - a;
@@ -121,6 +137,8 @@ void walls(vec3 ro, vec3 rd, float maxT, Trail tr, vec3 color, inout vec3 emit, 
 // Soft halo around the walls' top edges (cheap stand-in for bloom).
 float edgeHalo(vec3 ro, vec3 rd, float maxT, Trail tr) {
   float g = 0.;
+  // the halo is below 1e-10 more than 2.5 from the edges
+  if (!nearTrail(ro, rd, maxT, tr, 2.5, WALL_H - 2.5, WALL_H + 2.5)) return g;
   for (int k = 0; k < 8; k++) {
     if (k >= tr.n) break;
     vec3 a = vec3(tr.a[k].x, WALL_H, tr.a[k].y), b = vec3(tr.b[k].x, WALL_H, tr.b[k].y);
@@ -223,16 +241,18 @@ vec3 sky(vec3 rd) {
     float tw = .6 + .4 * sin(ST * (1. + star * 4.) + star * 50.);
     col += vec3(.6, .85, 1.) * smoothstep(.25, 0., length(fract(sp) - .5)) * tw * (star - .985) * 40. * smoothstep(.05, .2, e);
   }
-  // storm clouds drifting, lit from inside now and then
-  vec2 cp = vec2(az * 3. + ST * .01, e * 9.);
-  float cl = fbm(cp + vec2(fbm(cp * 1.3 + ST * .02), 0.)) ;
-  float clouds = smoothstep(.38, .75, cl) * smoothstep(.04, .14, e) * smoothstep(.6, .2, e);
-  float flashT = floor(ST / 7.);
-  float flash = step(.55, hash11(flashT)) * exp(-fract(ST / 7.) * 7. * 3.) * (1. + sin(ST * 60.) * .3);
-  vec2 fc = vec2(hash11(flashT + .3) * 1.6 - .8, .2);
-  float near = exp(-length(vec2(az, e) - fc) * 7.);
-  col = mix(col, srgb(vec3(.05, .11, .15)), clouds * .8);
-  col += CYAN * clouds * (.015 + flash * near * .7) * cl;
+  // storm clouds drifting, lit from inside now and then (only in their band)
+  if (e > .04 && e < .6) {
+    vec2 cp = vec2(az * 3. + ST * .01, e * 9.);
+    float cl = fbm(cp + vec2(fbm(cp * 1.3 + ST * .02), 0.)) ;
+    float clouds = smoothstep(.38, .75, cl) * smoothstep(.04, .14, e) * smoothstep(.6, .2, e);
+    float flashT = floor(ST / 7.);
+    float flash = step(.55, hash11(flashT)) * exp(-fract(ST / 7.) * 7. * 3.) * (1. + sin(ST * 60.) * .3);
+    vec2 fc = vec2(hash11(flashT + .3) * 1.6 - .8, .2);
+    float near = exp(-length(vec2(az, e) - fc) * 7.);
+    col = mix(col, srgb(vec3(.05, .11, .15)), clouds * .8);
+    col += CYAN * clouds * (.015 + flash * near * .7) * cl;
+  }
   // horizon glow
   col += CYAN * .12 * exp(-abs(e) * 30.) + srgb(vec3(.05, .25, .35)) * .3 * exp(-abs(e) * 8.);
   // far beam of light
@@ -242,15 +262,18 @@ vec3 sky(vec3 rd) {
   col += beamAmt * vec3(.75, .95, 1.) * (exp(-bw * 1400.) * .9 + exp(-bw * 120.) * .1 + exp(-bw * 20.) * .03) * rise * (.9 + .1 * sin(time * 1.3));
   col += CYAN * .25 * exp(-length(vec2(bw * 6., e * 30.)));  // where it meets the ground
   // mountains: far range in haze, near range dark with glowing ridge lines
-  float m1 = .025 + .05 * fbm1(az * 5. + 11.) * smoothstep(.0, .5, abs(az - .05));
-  float m2 = .012 + .055 * pow(fbm1(az * 3.2 + 2.), 1.6) * smoothstep(.1, .7, abs(az + .1));
-  if (e < m1) {
-    col = mix(col, srgb(vec3(.02, .07, .09)), .75);
-    col += CYAN * .25 * exp(-(m1 - e) * 600.);
-  }
-  if (e < m2) {
-    col = srgb(vec3(.006, .014, .02)) + CYAN * .03 * exp(-abs(e) * 60.);
-    col += CYAN * .9 * exp(-(m2 - e) * 900.);
+  // (fbm1 stays below 1, so neither range rises above .075)
+  if (e < .075) {
+    float m1 = .025 + .05 * fbm1(az * 5. + 11.) * smoothstep(.0, .5, abs(az - .05));
+    float m2 = .012 + .055 * pow(fbm1(az * 3.2 + 2.), 1.6) * smoothstep(.1, .7, abs(az + .1));
+    if (e < m1) {
+      col = mix(col, srgb(vec3(.02, .07, .09)), .75);
+      col += CYAN * .25 * exp(-(m1 - e) * 600.);
+    }
+    if (e < m2) {
+      col = srgb(vec3(.006, .014, .02)) + CYAN * .03 * exp(-abs(e) * 60.);
+      col += CYAN * .9 * exp(-(m2 - e) * 900.);
+    }
   }
   return col;
 }
@@ -277,6 +300,9 @@ vec3 floorAt(vec3 p, float t, Trail tr0, Trail tr1, vec2 cyc0, vec2 cyc1) {
     Trail tr = c == 0 ? tr0 : tr1;
     vec3 colr = c == 0 ? CYAN : ORANGE;
     float l = 0.;
+    // (the light is below 1e-9 more than 10 from the trail)
+    vec4 bx = tr.box + vec4(-10, -10, 10, 10);
+    if (all(greaterThan(p.xz, bx.xy)) && all(lessThan(p.xz, bx.zw)))
     for (int k = 0; k < 8; k++) {
       if (k >= tr.n) break;
       vec2 a = tr.a[k], e = tr.b[k] - a;
@@ -320,17 +346,20 @@ void main() {
     // glossy reflection of sky, walls and cycles
     vec3 rr = reflect(rd, vec3(0, 1, 0));
     float fres = .08 + .6 * pow(1. - abs(rd.y), 5.);
-    beamAmt = .25;
-    vec3 rcol = sky(rr) * .6;
-    beamAmt = 1.;
-    vec3 emit = vec3(0); float trans = 1., nr = 1e9;
-    walls(p + rr * .001, rr, 200., tr0, CYAN, emit, trans, nr);
-    walls(p + rr * .001, rr, 200., tr1, ORANGE, emit, trans, nr);
     float rt0, rt1;
     vec4 r0 = drawCycle(p, rr, p0, d0, CYAN, rt0);
     vec4 r1 = drawCycle(p, rr, p1, d1, ORANGE, rt1);
-    rcol = rcol * trans + emit;
+    vec3 rcol;
     if (r0.a > 0.) rcol = r0.rgb; else if (r1.a > 0.) rcol = r1.rgb;
+    else {   // sky and walls only where no cycle covers them
+      beamAmt = .25;
+      rcol = sky(rr) * .6;
+      beamAmt = 1.;
+      vec3 emit = vec3(0); float trans = 1., nr = 1e9;
+      walls(p + rr * .001, rr, 200., tr0, CYAN, emit, trans, nr);
+      walls(p + rr * .001, rr, 200., tr1, ORANGE, emit, trans, nr);
+      rcol = rcol * trans + emit;
+    }
     // blur the reflection a little with distance by fading it
     col += rcol * fres * 1.4;
     // fog towards the horizon
